@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { q, migrate } from "./db.js";
-import { search, lookup } from "./literature.js";
+import { search, lookup, recent } from "./literature.js";
 import { SUBUNITS, CLIENTS, uniprotDetails } from "./subunits.js";
 import { aiEnabled, summarize, answer, describeError } from "./ai.js";
 import { SEED } from "./seed.js";
@@ -229,7 +229,7 @@ app.post("/api/ask", wrap(async (req, res) => {
 
 // ---------- static frontend ----------
 app.use(express.static(path.join(here, "..", "public")));
-app.get("*", (_req, res) => res.sendFile(path.join(here, "..", "public", "index.html")));
+app.get(/^\/(?!api\/).*/, (_req, res) => res.sendFile(path.join(here, "..", "public", "index.html")));
 
 // ---------- start ----------
 // Adds any starter papers not yet in the library; once all are present, never runs again
@@ -251,7 +251,57 @@ async function seed() {
   console.log(`Starter set: added ${added}, still missing ${missing}${missing ? " (will retry next start)" : ""}.`);
 }
 
+// ---------- daily auto-scan ----------
+// Once a day the app pulls newly published CCT/TRiC papers and preprints from Europe PMC
+// (which indexes PubMed + bioRxiv/medRxiv) into the shared library, tagged "auto".
+// Papers matching the PhD proposal's focus also get the "focus" tag.
+const FOCUS_RX = /mlst8|g[βb]l\b|gnb1|gnb5|g[βb] ?(1|5)\b|g[βb]γ|beta[- ]propeller|β-propeller|wd40|wd-40|anticarin|mtorc|phosducin|phlp|pdcl|cryo-?em|ring closure/i;
+const DAY = 24 * 3600 * 1000;
+const iso = (d) => d.toISOString().slice(0, 10);
+let scanRunning = false;
+
+async function dailyScan({ force = false } = {}) {
+  if (scanRunning) return { skipped: "already running" };
+  const last = (await q(`SELECT value FROM meta WHERE key='last_scan'`)).rows[0];
+  const lastAt = last ? JSON.parse(last.value) : null;
+  if (!force && lastAt && Date.now() - Date.parse(lastAt.at) < 20 * 3600 * 1000) return { skipped: "ran recently", last: lastAt };
+  scanRunning = true;
+  try {
+    // First run backfills 30 days; later runs re-check the last 7 days to catch late indexing.
+    const from = iso(new Date(Date.now() - (lastAt ? 7 : 30) * DAY));
+    const to = iso(new Date());
+    const recs = await recent(from, to);
+    const added = [];
+    for (const rec of recs) {
+      const tags = ["auto", `scan-${to}`];
+      if (FOCUS_RX.test(`${rec.title} ${rec.abstract || ""}`)) tags.push("focus");
+      const id = await insertPaper(rec, "Daily scan", tags);
+      if (id !== null) added.push({ id, title: rec.title, focus: tags.includes("focus") });
+    }
+    const result = { at: new Date().toISOString(), from, to, found: recs.length, added: added.length, focus: added.filter((a) => a.focus).length };
+    await q(`INSERT INTO meta (key, value) VALUES ('last_scan', $1) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, [JSON.stringify(result)]);
+    console.log(`Daily scan ${from}..${to}: ${recs.length} found, ${added.length} added (${result.focus} focus).`);
+    return result;
+  } finally {
+    scanRunning = false;
+  }
+}
+
+app.get("/api/scan", wrap(async (_req, res) => {
+  const last = (await q(`SELECT value FROM meta WHERE key='last_scan'`)).rows[0];
+  res.json({ last: last ? JSON.parse(last.value) : null, running: scanRunning });
+}));
+app.post("/api/scan", wrap(async (_req, res) => {
+  try { res.json(await dailyScan({ force: true })); }
+  catch (e) { res.status(502).json({ error: `Scan failed: ${e.message}` }); }
+}));
+
 const port = Number(process.env.PORT) || 3000;
 await migrate();
 app.listen(port, () => console.log(`CCT Research Hub listening on :${port}`));
-seed().catch((e) => console.error("seed failed", e));
+seed()
+  .catch((e) => console.error("seed failed", e))
+  .then(() => dailyScan())
+  .catch((e) => console.error("daily scan failed", e));
+// Check hourly; dailyScan() itself only runs if the last scan is more than 20 h old.
+setInterval(() => dailyScan().catch((e) => console.error("daily scan failed", e)), 3600 * 1000);

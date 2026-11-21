@@ -166,6 +166,27 @@ $("#lib-list").addEventListener("click", async (e) => {
   }
 });
 
+// ---------- daily auto-scan status ----------
+function scanText(last) {
+  if (!last) return "Daily scan: first run pending — new CCT/TRiC papers are added automatically each day (tagged #auto; proposal-focused ones also #focus).";
+  const when = new Date(last.at).toLocaleString();
+  return `Daily scan: last run ${when} — ${last.added} new paper${last.added === 1 ? "" : "s"} added (${last.focus} #focus) from ${last.found} found, ${last.from} → ${last.to}.`;
+}
+async function loadScan() {
+  try { const r = await api("/api/scan"); $("#scan-status").textContent = scanText(r.last); } catch { /* ignore */ }
+}
+$("#scan-now").addEventListener("click", async (e) => {
+  e.target.disabled = true;
+  $("#scan-status").textContent = "Daily scan: searching Europe PMC for new CCT/TRiC papers…";
+  try {
+    const r = await api("/api/scan", { method: "POST" });
+    $("#scan-status").textContent = scanText(r.at ? r : r.last);
+    await loadLibrary();
+    toast(r.added ? `${r.added} new paper${r.added === 1 ? "" : "s"} added` : "No new papers");
+  } catch (err) { $("#scan-status").textContent = err.message; }
+  e.target.disabled = false;
+});
+
 // ---------- paper drawer ----------
 async function openPaper(id) {
   const drawer = $("#drawer");
@@ -345,6 +366,7 @@ async function boot() {
   $("#login").hidden = true; $("#app").hidden = false;
   $("#who").textContent = state.me;
   await loadLibrary();
+  loadScan();
   showTab(["search", "library", "subunits", "ask"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "library");
 }
 boot();

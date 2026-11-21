@@ -108,6 +108,7 @@ main { max-width: 1100px; margin: 0 auto; padding: 20px 24px 64px; }
 .filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
 .filters .grow { flex: 1 1 260px; }
 .filters .year { width: 84px; }
+.scanbar { display: flex; align-items: center; gap: 4px; margin: -2px 0 8px; flex-wrap: wrap; }
 .tagbar { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
 
 /* paper list */

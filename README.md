@@ -12,6 +12,11 @@ chaperonin **CCT/TRiC** (chaperonin containing TCP-1).
   structure UniProt lists, and the library papers that mention it.
 - **Ask the library** (optional): Claude answers questions *only* from the saved abstracts
   and cites each claim by PMID; per-paper AI summaries.
+- **Daily auto-scan**: once a day the server adds newly published CCT/TRiC papers and preprints
+  from Europe PMC to the library. They are tagged `#auto`; papers that match the proposal's focus
+  (mLST8, Gβ1/Gβ5, β-propeller/WD40, Anticarin, mTORC, PhLP, cryo-EM, ring closure) are also
+  tagged `#focus`. The first run backfills 30 days, and each later run re-checks the past 7 days
+  to catch late-indexed papers. The Library tab has a **Check now** button.
 - **Starter set**: 18 landmark papers (structure, substrates, disease) are loaded on first
   boot. Every PMID was verified against PubMed, and metadata is fetched live, never typed in.
 

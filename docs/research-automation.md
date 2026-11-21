@@ -1,5 +1,14 @@
 # Scheduled research reports
 
+## Papers: added automatically by the app
+
+The web app scans Europe PMC (PubMed plus bioRxiv/medRxiv) once a day and adds new CCT/TRiC
+papers to the shared library, tagged `#auto`. Papers that match the proposal's focus are also
+tagged `#focus`. The scan runs on Railway and doesn't depend on Google Drive. To run it on
+demand, use **Library → Check now**.
+
+## Written reports: Google Drive
+
 The CCT Research Hub web app is the lab's interactive library. Recurring literature
 reports are produced separately, by one scheduled Claude task that saves Google Docs
 to a shared Drive folder.

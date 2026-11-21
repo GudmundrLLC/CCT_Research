@@ -107,3 +107,21 @@ export async function lookup(source, extId) {
   if (!rec.abstract && rec.pmid) rec.abstract = await pubmedAbstract(rec.pmid).catch(() => null);
   return rec;
 }
+
+// New CCT/TRiC records (PubMed + preprints) first published between two dates (YYYY-MM-DD).
+export async function recent(from, to, max = 300) {
+  const query = `${BASE} AND (SRC:MED OR SRC:PPR) AND FIRST_PDATE:[${from} TO ${to}]`;
+  const out = [];
+  let cursor = "*";
+  while (out.length < max) {
+    const data = await epmc({ query, pageSize: "100", cursorMark: cursor });
+    const rows = data.resultList?.result || [];
+    out.push(...rows.map(toRecord));
+    if (!rows.length || !data.nextCursorMark || data.nextCursorMark === cursor) break;
+    cursor = data.nextCursorMark;
+  }
+  for (const rec of out) {
+    if (!rec.abstract && rec.pmid) rec.abstract = await pubmedAbstract(rec.pmid).catch(() => null);
+  }
+  return out;
+}

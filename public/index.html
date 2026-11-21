@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CCT Research Hub</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='13' fill='none' stroke='%232f6f73' stroke-width='3'/><circle cx='16' cy='16' r='5' fill='%232f6f73'/></svg>" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div id="login" class="login" hidden>
+    <form id="login-form" class="login-card">
+      <div class="brand brand-lg"><span class="ring" aria-hidden="true"></span>CCT Research Hub</div>
+      <p class="muted">Shared literature workspace for the lab's work on the chaperonin CCT/TRiC.</p>
+      <label>Your name<input name="name" autocomplete="name" required maxlength="60" /></label>
+      <label>Lab passcode<input name="passcode" type="password" autocomplete="current-password" required /></label>
+      <p id="login-error" class="error" role="alert"></p>
+      <button class="btn primary" type="submit">Sign in</button>
+    </form>
+  </div>
+
+  <div id="app" hidden>
+    <header class="topbar">
+      <div class="brand"><span class="ring" aria-hidden="true"></span>CCT Research Hub</div>
+      <nav class="tabs" role="tablist">
+        <button role="tab" data-tab="search">Search</button>
+        <button role="tab" data-tab="library">Library <span id="lib-count" class="count"></span></button>
+        <button role="tab" data-tab="subunits">Subunits</button>
+        <button role="tab" data-tab="ask">Ask</button>
+      </nav>
+      <div class="who"><span id="who"></span><button id="logout" class="btn link">Sign out</button></div>
+    </header>
+
+    <main>
+      <!-- SEARCH -->
+      <section id="tab-search" class="tab" hidden>
+        <form id="search-form" class="filters">
+          <input name="text" type="search" class="grow" placeholder="Refine within CCT/TRiC literature, e.g. tubulin folding" aria-label="Search terms" />
+          <select name="subunit" aria-label="Subunit">
+            <option value="">All subunits</option>
+            <option>CCT1</option><option>CCT2</option><option>CCT3</option><option>CCT4</option><option>CCT5</option>
+            <option>CCT6A</option><option>CCT6B</option><option>CCT7</option><option>CCT8</option>
+          </select>
+          <select name="topic" aria-label="Topic">
+            <option value="">All topics</option>
+            <option value="structure">Structure &amp; mechanism</option>
+            <option value="disease">Disease &amp; cancer</option>
+            <option value="substrates">Substrates &amp; interactome</option>
+          </select>
+          <select name="kind" aria-label="Publication type">
+            <option value="">Papers + preprints</option>
+            <option value="peer">Peer-reviewed only</option>
+            <option value="preprint">Preprints only</option>
+          </select>
+          <input name="from" type="number" min="1950" max="2100" placeholder="From" aria-label="From year" class="year" />
+          <input name="to" type="number" min="1950" max="2100" placeholder="To" aria-label="To year" class="year" />
+          <select name="sort" aria-label="Sort">
+            <option value="relevance">Relevance</option>
+            <option value="date">Newest</option>
+            <option value="cited">Most cited</option>
+          </select>
+          <button class="btn primary" type="submit">Search</button>
+        </form>
+        <p id="search-status" class="muted small"></p>
+        <ol id="search-results" class="papers"></ol>
+        <div class="center"><button id="search-more" class="btn" hidden>Load more</button></div>
+      </section>
+
+      <!-- LIBRARY -->
+      <section id="tab-library" class="tab" hidden>
+        <div class="filters">
+          <input id="lib-filter" type="search" class="grow" placeholder="Filter by title, author, abstract or tag" aria-label="Filter library" />
+          <select id="lib-topic" aria-label="Topic">
+            <option value="">All topics</option>
+            <option value="structure">Structure &amp; mechanism</option>
+            <option value="disease">Disease &amp; cancer</option>
+            <option value="substrates">Substrates &amp; interactome</option>
+          </select>
+          <select id="lib-status" aria-label="Read status">
+            <option value="">Read + unread</option>
+            <option value="unread">Unread by me</option>
+            <option value="read">Read by me</option>
+          </select>
+          <select id="lib-sort" aria-label="Sort">
+            <option value="added">Recently added</option>
+            <option value="year">Newest publication</option>
+            <option value="notes">Most discussed</option>
+          </select>
+          <a class="btn" href="/api/export.bib" download>Export BibTeX</a>
+        </div>
+        <div id="lib-tags" class="tagbar"></div>
+        <ol id="lib-list" class="papers"></ol>
+      </section>
+
+      <!-- SUBUNITS -->
+      <section id="tab-subunits" class="tab" hidden>
+        <div class="subunit-layout">
+          <div>
+            <h2 class="h2">The hetero-oligomeric ring</h2>
+            <p class="muted small">Human CCT/TRiC: two stacked rings of eight paralogous subunits. Select a subunit for UniProt function, structures, and library papers that mention it.</p>
+            <div id="ring" class="ring-grid"></div>
+            <h3 class="h3">Well-established clients</h3>
+            <ul id="clients" class="clients"></ul>
+          </div>
+          <article id="subunit-detail" class="panel"><p class="muted">Select a subunit.</p></article>
+        </div>
+      </section>
+
+      <!-- ASK -->
+      <section id="tab-ask" class="tab" hidden>
+        <div class="ask-wrap">
+          <h2 class="h2">Ask the library</h2>
+          <p class="muted small">Answers come <strong>only</strong> from abstracts saved in the lab library, with citations. If the library doesn't cover it, you'll be told.</p>
+          <form id="ask-form" class="ask-form">
+            <textarea name="question" rows="3" required placeholder="e.g. Which subunits interact with polyglutamine huntingtin, and what is the evidence?"></textarea>
+            <button class="btn primary" type="submit">Ask</button>
+          </form>
+          <div id="ask-out"></div>
+        </div>
+      </section>
+    </main>
+
+    <!-- paper drawer -->
+    <aside id="drawer" class="drawer" hidden aria-modal="true" role="dialog" aria-labelledby="d-title">
+      <div class="drawer-inner">
+        <button id="drawer-close" class="btn link close" aria-label="Close">✕</button>
+        <div id="drawer-body"></div>
+      </div>
+    </aside>
+    <div id="toast" class="toast" role="status" hidden></div>
+  </div>
+
+  <script src="/app.js" type="module"></script>
+</body>
+</html>

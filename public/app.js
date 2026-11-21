@@ -43,6 +43,7 @@ function showTab(name) {
   if (location.hash !== `#${name}`) history.replaceState(null, "", `#${name}`);
   if (name === "subunits") loadSubunits();
   if (name === "library") renderLibrary();
+  if (name === "scope") loadScope();
 }
 $$(".tabs button").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
 
@@ -329,6 +330,90 @@ document.addEventListener("click", (e) => {
   if (su) { const f = $("#search-form"); f.subunit.value = su.dataset.searchsu; showTab("search"); f.requestSubmit(); }
 });
 
+// ---------- scope ----------
+const KIND_LABEL = { proposal: "Proposals", inquiry: "Areas of inquiry", concept: "Concepts", method: "Methods", note: "Lab notes" };
+state.scope = [];
+
+async function loadScope() {
+  const r = await api("/api/scope");
+  state.scope = r.items;
+  renderScope();
+}
+["#scope-filter", "#scope-kind"].forEach((sel) => $(sel).addEventListener("input", renderScope));
+
+function renderScope() {
+  const text = $("#scope-filter").value.toLowerCase().trim(), kind = $("#scope-kind").value;
+  const items = state.scope.filter((it) => (!kind || it.kind === kind) &&
+    (!text || `${it.title} ${it.body} ${it.keywords.join(" ")}`.toLowerCase().includes(text)));
+  if (!items.length) { $("#scope-list").innerHTML = `<p class="muted">Nothing here yet. Use “+ Add to scope”.</p>`; return; }
+  $("#scope-list").innerHTML = Object.keys(KIND_LABEL).map((k) => {
+    const group = items.filter((it) => it.kind === k);
+    if (!group.length) return "";
+    return `<div class="scope-group"><h3>${KIND_LABEL[k]} (${group.length})</h3>${group.map((it) => `
+      <article class="scope-card ${it.active ? "" : "off"}">
+        <div class="paper-row">
+          <h4>${esc(it.title)}</h4>
+          ${it.active ? "" : `<span class="chip">paused</span>`}
+          <span class="spacer"></span>
+          ${it.papers ? `<button class="btn link small" data-scopetag="scope-${esc(it.slug)}">${it.papers} matching paper${it.papers === 1 ? "" : "s"} →</button>` : `<span class="small muted">no matching papers yet</span>`}
+          <button class="btn small" data-scopeedit="${it.id}">Edit</button>
+        </div>
+        ${it.keywords.length ? `<div class="paper-row">${it.keywords.map((k) => `<span class="chip">${esc(k)}</span>`).join("")}
+          <span class="small muted">${it.context === "any" ? "· any paper" : "· with CCT/TRiC"}</span></div>` : ""}
+        ${it.body ? `<p class="scope-body">${esc(it.body)}</p>` : ""}
+        <div class="small muted">${it.link ? `<a href="${esc(it.link)}" target="_blank" rel="noopener">Open link</a> · ` : ""}added by ${esc(it.author)} · updated ${new Date(it.updated_at).toLocaleDateString()}</div>
+      </article>`).join("")}</div>`;
+  }).join("");
+}
+
+function openScopeForm(it) {
+  const f = $("#scope-form");
+  f.reset();
+  f.id.value = it?.id || "";
+  f.kind.value = it?.kind || "inquiry";
+  f.title.value = it?.title || "";
+  f.keywords.value = (it?.keywords || []).join(", ");
+  f.context.value = it?.context || "cct";
+  f.link.value = it?.link || "";
+  f.body.value = it?.body || "";
+  f.active.checked = it ? it.active : true;
+  $("#scope-delete").hidden = !it;
+  $("#scope-error").textContent = "";
+  f.hidden = false;
+  f.title.focus();
+  f.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+$("#scope-add").addEventListener("click", () => openScopeForm(null));
+$("#scope-cancel").addEventListener("click", () => ($("#scope-form").hidden = true));
+$("#scope-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = e.target;
+  const body = { kind: f.kind.value, title: f.title.value, keywords: f.keywords.value, context: f.context.value,
+    link: f.link.value, body: f.body.value, active: f.active.checked };
+  try {
+    const r = f.id.value
+      ? await api(`/api/scope/${f.id.value}`, { method: "PUT", body })
+      : await api("/api/scope", { method: "POST", body });
+    f.hidden = true;
+    toast(`Saved — ${r.papers} library paper${r.papers === 1 ? "" : "s"} match. The next daily scan will search these terms.`);
+    await Promise.all([loadScope(), loadLibrary()]);
+  } catch (err) { $("#scope-error").textContent = err.message; }
+});
+$("#scope-delete").addEventListener("click", async () => {
+  const id = $("#scope-form").id.value;
+  if (!id || !confirm("Delete this scope item for everyone? Papers keep their other tags.")) return;
+  await api(`/api/scope/${id}`, { method: "DELETE" });
+  $("#scope-form").hidden = true;
+  await Promise.all([loadScope(), loadLibrary()]);
+});
+$("#scope-list").addEventListener("click", (e) => {
+  const ed = e.target.closest("[data-scopeedit]");
+  if (ed) return openScopeForm(state.scope.find((x) => x.id === Number(ed.dataset.scopeedit)));
+  const tg = e.target.closest("[data-scopetag]");
+  if (tg) { state.tagFilter = tg.dataset.scopetag; showTab("library"); return; }
+  if (e.target.matches(".scope-body")) e.target.classList.toggle("open");
+});
+
 // ---------- ask ----------
 function md(text) {
   // Minimal, safe markdown: escape, then bold, bullets, paragraphs, and citation buttons.
@@ -367,6 +452,6 @@ async function boot() {
   $("#who").textContent = state.me;
   await loadLibrary();
   loadScan();
-  showTab(["search", "library", "subunits", "ask"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "library");
+  showTab(["search", "library", "subunits", "scope", "ask"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "library");
 }
 boot();

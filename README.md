@@ -17,6 +17,14 @@ chaperonin **CCT/TRiC** (chaperonin containing TCP-1).
   (mLST8, Gβ1/Gβ5, β-propeller/WD40, Anticarin, mTORC, PhLP, cryo-EM, ring closure) are also
   tagged `#focus`. The first run backfills 30 days, and each later run re-checks the past 7 days
   to catch late-indexed papers. The Library tab has a **Check now** button.
+- **Research scope** (Scope tab): proposals, areas of inquiry, concepts, methods and lab notes.
+  - Each active item's search terms widen the daily scan. "Any paper" items reach beyond
+    CCT/TRiC.
+  - Each item tags matching papers `#scope-<name>`.
+  - The scheduled Drive reports read the whole list, through a key-protected export at
+    `/api/scope/export.md`, as extra search scope and context.
+  - The tab starts with Aaron's third-year proposal, its aims as areas of inquiry, and the
+    proposal's methods.
 - **Starter set**: 18 landmark papers (structure, substrates, disease) are loaded on first
   boot. Every PMID was verified against PubMed, and metadata is fetched live, never typed in.
 
@@ -28,6 +36,8 @@ chaperonin **CCT/TRiC** (chaperonin containing TCP-1).
    - `DATABASE_URL` = `${{Postgres.DATABASE_URL}}`
    - `LAB_PASSCODE` = a passcode to share with the lab
    - `ANTHROPIC_API_KEY` (optional) enables AI summaries and Q&A
+   - `SCOPE_FEED_KEY` (optional) is a long random string. It lets the scheduled research
+     reports read the Scope tab, using the `X-Scope-Key` header.
 4. Under **Settings → Networking → Generate Domain**, create a public URL.
 
 `railway.json` sets the start command and a health check on `/api/health`.

@@ -5,10 +5,10 @@ const EPMC = "https://www.ebi.ac.uk/europepmc/webservices/rest/search";
 // CCT terms must appear in the title or abstract: Europe PMC otherwise matches
 // full text, where a passing mention (e.g. in a gene list) pulls in noise.
 // Bare "CCT"/"TRiC" are avoided on their own (both collide with unrelated terms).
-const inTA = (terms) => terms.map((t) => `TITLE:${t} OR ABSTRACT:${t}`).join(" OR ");
+export const inTA = (terms) => terms.map((t) => `TITLE:${t} OR ABSTRACT:${t}`).join(" OR ");
 const BASE_TERMS = ['"chaperonin containing TCP-1"', '"chaperonin containing TCP1"', '"chaperonin-containing TCP-1"',
   '"TCP-1 ring complex"', '"TRiC/CCT"', '"CCT/TRiC"', '"T-complex protein 1"', '(TRiC AND chaperonin)', '(CCT AND chaperonin)'];
-const BASE = `(${inTA(BASE_TERMS)})`;
+export const BASE = `(${inTA(BASE_TERMS)})`;
 
 export const SUBUNIT_TERMS = {
   CCT1: ['"CCT1"', '"TCP1"', '"TCP-1 alpha"', '"CCTalpha"', '"CCT alpha"'],
@@ -109,8 +109,11 @@ export async function lookup(source, extId) {
 }
 
 // New CCT/TRiC records (PubMed + preprints) first published between two dates (YYYY-MM-DD).
-export async function recent(from, to, max = 300) {
-  const query = `${BASE} AND (SRC:MED OR SRC:PPR) AND FIRST_PDATE:[${from} TO ${to}]`;
+// `extra` is an optional list of Europe PMC clauses OR'ed with the CCT/TRiC base query
+// (used for lab scope items that should match papers outside CCT/TRiC).
+export async function recent(from, to, max = 500, extra = []) {
+  const scope = extra.length ? `(${[BASE, ...extra.map((c) => `(${c})`)].join(" OR ")})` : BASE;
+  const query = `${scope} AND (SRC:MED OR SRC:PPR) AND FIRST_PDATE:[${from} TO ${to}]`;
   const out = [];
   let cursor = "*";
   while (out.length < max) {

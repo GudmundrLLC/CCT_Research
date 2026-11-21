@@ -26,6 +26,7 @@
         <button role="tab" data-tab="search">Search</button>
         <button role="tab" data-tab="library">Library <span id="lib-count" class="count"></span></button>
         <button role="tab" data-tab="subunits">Subunits</button>
+        <button role="tab" data-tab="scope">Scope</button>
         <button role="tab" data-tab="ask">Ask</button>
       </nav>
       <div class="who"><span id="who"></span><button id="logout" class="btn link">Sign out</button></div>
@@ -108,6 +109,72 @@
           </div>
           <article id="subunit-detail" class="panel"><p class="muted">Select a subunit.</p></article>
         </div>
+      </section>
+
+      <!-- SCOPE -->
+      <section id="tab-scope" class="tab" hidden>
+        <div class="scope-head">
+          <div>
+            <h2 class="h2">Research scope</h2>
+            <p class="muted small">Proposals, areas of inquiry, concepts, methods and lab notes. Each active item's
+              <strong>search terms</strong> widen the app's daily paper scan, and the
+              scheduled daily, weekly, monthly, quarterly and annual reports read this scope as extra context.
+              Papers matching an item are tagged <code>#scope-…</code> and <code>#focus</code>.</p>
+          </div>
+          <button id="scope-add" class="btn primary">+ Add to scope</button>
+        </div>
+
+        <form id="scope-form" class="panel scope-form" hidden>
+          <input type="hidden" name="id" />
+          <div class="grid2">
+            <label>Type
+              <select name="kind" required>
+                <option value="inquiry">Area of inquiry</option>
+                <option value="concept">Concept</option>
+                <option value="method">Method</option>
+                <option value="proposal">Proposal</option>
+                <option value="note">Lab note</option>
+              </select>
+            </label>
+            <label>Title<input name="title" required maxlength="200" placeholder="e.g. PhLP1 in Gβγ assembly" /></label>
+          </div>
+          <label>Search terms <span class="muted">(comma-separated; leave blank for context-only notes; use plain-ASCII spellings like "GNB5" or "G beta 5" for best search results)</span>
+            <input name="keywords" placeholder="e.g. PhLP1, phosducin-like protein, PDCL" />
+          </label>
+          <div class="grid2">
+            <label>Match papers
+              <select name="context">
+                <option value="cct">Only when they also mention CCT/TRiC</option>
+                <option value="any">Any paper (widens the scan beyond CCT/TRiC)</option>
+              </select>
+            </label>
+            <label>Link <span class="muted">(optional, e.g. a Google Doc)</span><input name="link" type="url" placeholder="https://" /></label>
+          </div>
+          <label>Details <span class="muted">(notes, hypotheses, protocol, or paste a proposal)</span>
+            <textarea name="body" rows="8"></textarea>
+          </label>
+          <label class="check"><input type="checkbox" name="active" checked /> Active (used by the scans and reports)</label>
+          <p class="error" id="scope-error" role="alert"></p>
+          <div class="paper-row">
+            <button class="btn primary" type="submit">Save</button>
+            <button class="btn" type="button" id="scope-cancel">Cancel</button>
+            <span class="spacer"></span>
+            <button class="btn link small" type="button" id="scope-delete" hidden>Delete</button>
+          </div>
+        </form>
+
+        <div class="filters">
+          <input id="scope-filter" type="search" class="grow" placeholder="Filter scope" aria-label="Filter scope" />
+          <select id="scope-kind" aria-label="Type">
+            <option value="">All types</option>
+            <option value="proposal">Proposals</option>
+            <option value="inquiry">Areas of inquiry</option>
+            <option value="concept">Concepts</option>
+            <option value="method">Methods</option>
+            <option value="note">Lab notes</option>
+          </select>
+        </div>
+        <div id="scope-list"></div>
       </section>
 
       <!-- ASK -->

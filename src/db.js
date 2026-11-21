@@ -50,6 +50,20 @@ export async function migrate() {
       read_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
       PRIMARY KEY (paper_id, reader)
     );
+    CREATE TABLE IF NOT EXISTS scope_items (
+      id          SERIAL PRIMARY KEY,
+      kind        TEXT NOT NULL,            -- proposal | inquiry | concept | method | note
+      title       TEXT NOT NULL,
+      slug        TEXT NOT NULL UNIQUE,     -- stable library tag: scope-<slug>
+      body        TEXT NOT NULL DEFAULT '',
+      keywords    TEXT[] NOT NULL DEFAULT '{}',
+      context     TEXT NOT NULL DEFAULT 'cct', -- cct: only CCT/TRiC papers; any: any paper
+      link        TEXT,
+      active      BOOLEAN NOT NULL DEFAULT true,
+      author      TEXT NOT NULL,
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
     CREATE TABLE IF NOT EXISTS meta (
       key   TEXT PRIMARY KEY,
       value TEXT NOT NULL

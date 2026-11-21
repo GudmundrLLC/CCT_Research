@@ -7,11 +7,12 @@ import { search, lookup, recent } from "./literature.js";
 import { SUBUNITS, CLIENTS, uniprotDetails } from "./subunits.js";
 import { aiEnabled, summarize, answer, describeError } from "./ai.js";
 import { SEED } from "./seed.js";
+import { KINDS, slugify, tidyKeywords, clauseFor, isCct, activeItems, scopeTags, retag, exportMarkdown, seedScope } from "./scope.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 app.set("trust proxy", 1);
-app.use(express.json({ limit: "100kb" }));
+app.use(express.json({ limit: "2mb" }));
 
 // ---------- auth: one shared lab passcode + a display name ----------
 const PASSCODE = process.env.LAB_PASSCODE || "";
@@ -51,6 +52,17 @@ app.post("/api/logout", (_req, res) => {
 });
 
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
+
+// Scope export for the scheduled research runs: authenticated by the X-Scope-Key header
+// (SCOPE_FEED_KEY env var), not by the lab cookie. Disabled when SCOPE_FEED_KEY is unset.
+app.get("/api/scope/export.md", async (req, res) => {
+  const key = process.env.SCOPE_FEED_KEY || "";
+  const got = String(req.headers["x-scope-key"] || "");
+  const ok = key && got.length === key.length && crypto.timingSafeEqual(Buffer.from(got), Buffer.from(key));
+  if (!ok) return res.status(401).type("text/plain").send("Unauthorized");
+  try { res.type("text/markdown").send(await exportMarkdown()); }
+  catch (e) { res.status(500).type("text/plain").send(e.message); }
+});
 
 app.use("/api", (req, res, next) => {
   const s = readSession(req);
@@ -227,6 +239,65 @@ app.post("/api/ask", wrap(async (req, res) => {
   } catch (e) { res.status(502).json({ error: describeError(e) }); }
 }));
 
+// ---------- research scope ----------
+const markScopeDirty = () => q(`INSERT INTO meta (key, value) VALUES ('scope_dirty', '1') ON CONFLICT (key) DO NOTHING`);
+const SCOPE_COLS = `s.*, (SELECT count(*)::int FROM papers p WHERE ('scope-' || s.slug) = ANY(p.tags)) AS papers`;
+
+function scopeInput(body) {
+  const kind = String(body.kind || "");
+  if (!(kind in KINDS)) throw Object.assign(new Error("Pick a type."), { status: 400 });
+  const title = String(body.title || "").trim().slice(0, 200);
+  if (!title) throw Object.assign(new Error("Give it a title."), { status: 400 });
+  const link = String(body.link || "").trim();
+  if (link && !/^https?:\/\//i.test(link)) throw Object.assign(new Error("Links must start with http:// or https://"), { status: 400 });
+  return {
+    kind, title, link: link || null,
+    body: String(body.body || "").slice(0, 200000),
+    keywords: tidyKeywords(body.keywords),
+    context: body.context === "any" ? "any" : "cct",
+    active: body.active !== false,
+  };
+}
+
+app.get("/api/scope", wrap(async (_req, res) => {
+  const { rows } = await q(`SELECT ${SCOPE_COLS} FROM scope_items s ORDER BY s.active DESC, s.updated_at DESC`);
+  res.json({ kinds: KINDS, items: rows, feed: Boolean(process.env.SCOPE_FEED_KEY) });
+}));
+
+app.post("/api/scope", wrap(async (req, res) => {
+  let v; try { v = scopeInput(req.body || {}); } catch (e) { return res.status(e.status || 400).json({ error: e.message }); }
+  let slug = slugify(v.title);
+  const taken = await q(`SELECT 1 FROM scope_items WHERE slug = $1`, [slug]);
+  if (taken.rows[0]) slug = `${slug}-${Date.now().toString(36).slice(-4)}`;
+  const { rows } = await q(
+    `INSERT INTO scope_items (kind, title, slug, body, keywords, context, link, active, author)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+    [v.kind, v.title, slug, v.body, v.keywords, v.context, v.link, v.active, req.user],
+  );
+  const matched = await retag(rows[0]);
+  await markScopeDirty();
+  res.status(201).json({ ...rows[0], papers: matched });
+}));
+
+app.put("/api/scope/:id", wrap(async (req, res) => {
+  let v; try { v = scopeInput(req.body || {}); } catch (e) { return res.status(e.status || 400).json({ error: e.message }); }
+  const { rows } = await q(
+    `UPDATE scope_items SET kind=$1, title=$2, body=$3, keywords=$4, context=$5, link=$6, active=$7, updated_at=now()
+     WHERE id=$8 RETURNING *`,
+    [v.kind, v.title, v.body, v.keywords, v.context, v.link, v.active, req.params.id],
+  );
+  if (!rows[0]) return res.status(404).json({ error: "Not found" });
+  const matched = await retag(rows[0]);
+  await markScopeDirty();
+  res.json({ ...rows[0], papers: matched });
+}));
+
+app.delete("/api/scope/:id", wrap(async (req, res) => {
+  const { rows } = await q(`DELETE FROM scope_items WHERE id=$1 RETURNING *`, [req.params.id]);
+  if (rows[0]) await retag({ ...rows[0], active: false });
+  res.json({ ok: true });
+}));
+
 // ---------- static frontend ----------
 app.use(express.static(path.join(here, "..", "public")));
 app.get(/^\/(?!api\/).*/, (_req, res) => res.sendFile(path.join(here, "..", "public", "index.html")));
@@ -268,17 +339,26 @@ async function dailyScan({ force = false } = {}) {
   scanRunning = true;
   try {
     // First run backfills 30 days; later runs re-check the last 7 days to catch late indexing.
-    const from = iso(new Date(Date.now() - (lastAt ? 7 : 30) * DAY));
+    // ...or 30 days again after scope items change, so new areas of inquiry get a backfill.
+    const dirty = (await q(`SELECT 1 FROM meta WHERE key='scope_dirty'`)).rows[0];
+    const from = iso(new Date(Date.now() - (lastAt && !dirty ? 7 : 30) * DAY));
     const to = iso(new Date());
-    const recs = await recent(from, to);
+    // Scope items marked "any paper" widen the query beyond CCT/TRiC; all active items tag matches.
+    const items = await activeItems();
+    const extra = items.filter((it) => it.context === "any").map(clauseFor).filter(Boolean);
+    const recs = await recent(from, to, 500, extra);
     const added = [];
     for (const rec of recs) {
-      const tags = ["auto", `scan-${to}`];
-      if (FOCUS_RX.test(`${rec.title} ${rec.abstract || ""}`)) tags.push("focus");
+      const sTags = scopeTags(rec, items);
+      // Keep only papers about CCT/TRiC or matching an active scope item.
+      if (!sTags.length && !isCct(rec)) continue;
+      const tags = ["auto", `scan-${to}`, ...sTags];
+      if (sTags.length || FOCUS_RX.test(`${rec.title} ${rec.abstract || ""}`)) tags.push("focus");
       const id = await insertPaper(rec, "Daily scan", tags);
       if (id !== null) added.push({ id, title: rec.title, focus: tags.includes("focus") });
     }
     const result = { at: new Date().toISOString(), from, to, found: recs.length, added: added.length, focus: added.filter((a) => a.focus).length };
+    await q(`DELETE FROM meta WHERE key='scope_dirty'`);
     await q(`INSERT INTO meta (key, value) VALUES ('last_scan', $1) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, [JSON.stringify(result)]);
     console.log(`Daily scan ${from}..${to}: ${recs.length} found, ${added.length} added (${result.focus} focus).`);
     return result;
@@ -301,6 +381,8 @@ await migrate();
 app.listen(port, () => console.log(`CCT Research Hub listening on :${port}`));
 seed()
   .catch((e) => console.error("seed failed", e))
+  .then(() => seedScope())
+  .catch((e) => console.error("scope seed failed", e))
   .then(() => dailyScan())
   .catch((e) => console.error("daily scan failed", e));
 // Check hourly; dailyScan() itself only runs if the last scan is more than 20 h old.

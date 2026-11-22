@@ -4,35 +4,66 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>CCT Research Hub</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='13' fill='none' stroke='%232f6f73' stroke-width='3'/><circle cx='16' cy='16' r='5' fill='%232f6f73'/></svg>" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='13' fill='none' stroke='%235A37DC' stroke-width='3'/><circle cx='16' cy='16' r='5' fill='%235A37DC'/></svg>" />
+  <!-- DDUUI shell + chrome · served by Gudmundr Gateway (ecosystem plan 2026-11-22) -->
+  <link rel="stylesheet" href="https://gateway.gudmundr.com/svc/dduui/tokens.css?theme=lumen" />
+  <link rel="stylesheet" href="https://gateway.gudmundr.com/static/dduui/chrome.css" />
   <link rel="stylesheet" href="/styles.css" />
+  <script>
+    window.DDUUI_CHROME = {
+      appId: "cct_research",
+      appName: "CCT Research Hub",
+      appIcon: "flask-conical",
+      gateway: "https://gateway.gudmundr.com",
+      menuLabel: "Workspace",
+      theme: "lumen",
+      template: "DDUUI app shell",
+    };
+  </script>
+  <script src="https://gateway.gudmundr.com/static/dduui/chrome.js" defer></script>
 </head>
 <body>
   <div id="login" class="login" hidden>
-    <form id="login-form" class="login-card">
+    <div class="login-card">
       <div class="brand brand-lg"><span class="ring" aria-hidden="true"></span>CCT Research Hub</div>
       <p class="muted">Shared literature workspace for the lab's work on the chaperonin CCT/TRiC.</p>
-      <label>Your name<input name="name" autocomplete="name" required maxlength="60" /></label>
+      <p id="sso-error" class="error" role="alert"></p>
+      <a class="btn primary block" href="/auth/gateway/start">Sign in with Gudmundr</a>
+      <p class="muted small">One sign-in for every Gudmundr app. First time here? You'll be asked for the lab passcode once to join.</p>
+      <details class="fallback">
+        <summary>Sign in with the lab passcode instead</summary>
+        <form id="login-form" class="stack">
+          <label>Your name<input name="name" autocomplete="name" required maxlength="60" /></label>
+          <label>Lab passcode<input name="passcode" type="password" autocomplete="current-password" required /></label>
+          <p id="login-error" class="error" role="alert"></p>
+          <button class="btn" type="submit">Sign in with passcode</button>
+        </form>
+      </details>
+    </div>
+  </div>
+
+  <div id="join" class="login" hidden>
+    <form id="join-form" class="login-card">
+      <div class="brand brand-lg"><span class="ring" aria-hidden="true"></span>Join the lab workspace</div>
+      <p class="muted">Signed in with Gudmundr as <strong id="join-email"></strong>. Enter the lab passcode once to link this account to the CCT Research Hub.</p>
+      <label>Name shown on your notes<input name="name" autocomplete="name" required maxlength="60" /></label>
       <label>Lab passcode<input name="passcode" type="password" autocomplete="current-password" required /></label>
-      <p id="login-error" class="error" role="alert"></p>
-      <button class="btn primary" type="submit">Sign in</button>
+      <p id="join-error" class="error" role="alert"></p>
+      <button class="btn primary" type="submit">Join</button>
     </form>
   </div>
 
   <div id="app" hidden>
-    <header class="topbar">
-      <div class="brand"><span class="ring" aria-hidden="true"></span>CCT Research Hub</div>
-      <nav class="tabs" role="tablist">
-        <button role="tab" data-tab="search">Search</button>
-        <button role="tab" data-tab="library">Library <span id="lib-count" class="count"></span></button>
-        <button role="tab" data-tab="subunits">Subunits</button>
-        <button role="tab" data-tab="scope">Scope</button>
-        <button role="tab" data-tab="ask">Ask</button>
-      </nav>
-      <div class="who"><span id="who"></span><button id="logout" class="btn link">Sign out</button></div>
-    </header>
+    <!-- Page menu · moved into the DDUUI left rail (bottom dock on phones) by chrome.js -->
+    <nav class="tabs" role="tablist" aria-label="Workspace" aria-orientation="vertical" data-dduui-menu>
+      <button role="tab" data-tab="search" data-icon="search">Search</button>
+      <button role="tab" data-tab="library" data-icon="library">Library <span id="lib-count" class="count"></span></button>
+      <button role="tab" data-tab="subunits" data-icon="atom">Subunits</button>
+      <button role="tab" data-tab="scope" data-icon="target">Scope</button>
+      <button role="tab" data-tab="ask" data-icon="message-circle-question">Ask</button>
+    </nav>
 
-    <main>
+    <div class="page">
       <!-- SEARCH -->
       <section id="tab-search" class="tab" hidden>
         <form id="search-form" class="filters">
@@ -190,7 +221,7 @@
           <div id="ask-out"></div>
         </div>
       </section>
-    </main>
+    </div>
 
     <!-- paper drawer -->
     <aside id="drawer" class="drawer" hidden aria-modal="true" role="dialog" aria-labelledby="d-title">

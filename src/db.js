@@ -64,6 +64,14 @@ export async function migrate() {
       created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
       updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
     );
+    -- Lab members linked through Gudmundr Gateway SSO (2026-11-22).
+    CREATE TABLE IF NOT EXISTS members (
+      email         TEXT PRIMARY KEY,         -- Gateway-verified email (lower-case)
+      display_name  TEXT NOT NULL,            -- name shown on notes / reads
+      enrolled_by   TEXT NOT NULL,            -- passcode | gateway-grant
+      enrolled_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+      last_login_at TIMESTAMPTZ
+    );
     CREATE TABLE IF NOT EXISTS meta (
       key   TEXT PRIMARY KEY,
       value TEXT NOT NULL

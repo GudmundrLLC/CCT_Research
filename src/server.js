@@ -1,5 +1,6 @@
 import express from "express";
 import crypto from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { q, migrate } from "./db.js";
@@ -7,32 +8,53 @@ import { search, lookup, recent } from "./literature.js";
 import { SUBUNITS, CLIENTS, uniprotDetails } from "./subunits.js";
 import { aiEnabled, aiStatus, warmUp, maxPapers, summarize, answer, describeError } from "./ai.js";
 import { SEED } from "./seed.js";
+import { GATEWAY_URL, verifyGatewayToken, gatewayGrants, allowListed, loginUrl } from "./gateway.js";
 import { KINDS, slugify, tidyKeywords, clauseFor, isCct, activeItems, scopeTags, retag, exportMarkdown, seedScope } from "./scope.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 app.set("trust proxy", 1);
 app.use(express.json({ limit: "2mb" }));
+const wrapAsync = (fn) => (req, res, next) => fn(req, res, next).catch(next);
 
-// ---------- auth: one shared lab passcode + a display name ----------
+// ---------- auth: Gudmundr Gateway SSO (primary) + lab passcode (enrollment / fallback) ----------
+// Ecosystem plan 2026-11-22: identity comes from Gudmundr Gateway (one sign-in for
+// every Gudmundr app). The shared lab passcode stays as (a) the one-time step that
+// enrolls a Gateway account into this lab and (b) a fallback sign-in until every
+// lab member has linked their Gateway account.
 const PASSCODE = process.env.LAB_PASSCODE || "";
 const SECRET = crypto.createHash("sha256").update(`cct-hub:${process.env.SESSION_SECRET || PASSCODE}`).digest();
 const sign = (v) => crypto.createHmac("sha256", SECRET).update(v).digest("base64url");
+const SECURE = process.env.NODE_ENV === "production" || Boolean(process.env.RAILWAY_ENVIRONMENT) ? "; Secure" : "";
 
-function readSession(req) {
-  const raw = (req.headers.cookie || "").split(/;\s*/).find((c) => c.startsWith("sess="))?.slice(5);
+function readCookie(req, name) {
+  const raw = (req.headers.cookie || "").split(/;\s*/).find((c) => c.startsWith(`${name}=`))?.slice(name.length + 1);
   if (!raw) return null;
   const [val, mac] = raw.split(".");
   if (!val || !mac) return null;
-  const expected = sign(val);
-  if (mac.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(mac), Buffer.from(expected))) return null;
-  try { return JSON.parse(Buffer.from(val, "base64url").toString()); } catch { return null; }
+  const expected = sign(`${name}:${val}`);
+  if (mac.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(mac), Buffer.from(expected))) {
+    // Sessions issued before 2026-11-22 were signed without the cookie-name prefix.
+    if (name !== "sess") return null;
+    const legacy = sign(val);
+    if (mac.length !== legacy.length || !crypto.timingSafeEqual(Buffer.from(mac), Buffer.from(legacy))) return null;
+  }
+  try {
+    const obj = JSON.parse(Buffer.from(val, "base64url").toString());
+    if (obj && obj.exp && obj.exp < Date.now()) return null;
+    return obj;
+  } catch { return null; }
 }
 
-function setSession(res, name) {
-  const val = Buffer.from(JSON.stringify({ name })).toString("base64url");
-  res.setHeader("Set-Cookie", `sess=${val}.${sign(val)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${60 * 60 * 24 * 90}${process.env.NODE_ENV === "production" ? "; Secure" : ""}`);
+function writeCookie(res, name, obj, maxAgeS) {
+  const val = Buffer.from(JSON.stringify(obj)).toString("base64url");
+  res.append("Set-Cookie", `${name}=${val}.${sign(`${name}:${val}`)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAgeS}${SECURE}`);
 }
+const clearCookie = (res, name) => res.append("Set-Cookie", `${name}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${SECURE}`);
+
+const readSession = (req) => readCookie(req, "sess");
+const setSession = (res, user) => writeCookie(res, "sess", user, 60 * 60 * 24 * 90);
+const publicOrigin = (req) => (process.env.APP_PUBLIC_URL || `${req.protocol}://${req.get("host")}`).replace(/\/$/, "");
 
 app.post("/api/login", (req, res) => {
   const name = String(req.body?.name || "").trim().slice(0, 60);
@@ -42,14 +64,80 @@ app.post("/api/login", (req, res) => {
   const b = crypto.createHash("sha256").update(PASSCODE).digest();
   if (!name) return res.status(400).json({ error: "Enter your name." });
   if (!crypto.timingSafeEqual(a, b)) return res.status(401).json({ error: "Wrong passcode." });
-  setSession(res, name);
+  setSession(res, { name, idp: "passcode" });
   res.json({ name });
 });
 
 app.post("/api/logout", (_req, res) => {
-  res.setHeader("Set-Cookie", "sess=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0");
-  res.json({ ok: true });
+  clearCookie(res, "sess");
+  clearCookie(res, "gw_pending");
+  res.json({ ok: true, gatewayLogout: `${GATEWAY_URL}/auth/logout` });
 });
+
+// Gateway SSO
+app.get("/auth/gateway/start", (req, res) => {
+  const state = crypto.randomBytes(18).toString("base64url");
+  writeCookie(res, "gw_state", { state, exp: Date.now() + 10 * 60 * 1000 }, 600);
+  res.redirect(302, loginUrl(publicOrigin(req), state));
+});
+
+app.get("/auth/gateway/callback", wrapAsync(async (req, res) => {
+  const fail = (why) => res.redirect(302, `/?sso_error=${encodeURIComponent(why)}`);
+  const st = readCookie(req, "gw_state");
+  clearCookie(res, "gw_state");
+  const state = String(req.query.state || "");
+  if (!st?.state || state.length !== st.state.length || !crypto.timingSafeEqual(Buffer.from(state), Buffer.from(st.state))) {
+    return fail("Sign-in expired or was started elsewhere. Try again.");
+  }
+  let claims;
+  try { claims = await verifyGatewayToken(String(req.query.token || "")); }
+  catch (e) { console.warn(`gateway sso rejected: ${e.message}`); return fail("Gudmundr Gateway sign-in could not be verified."); }
+  const email = String(claims.email || claims.sub || "").trim().toLowerCase();
+  if (!email.includes("@")) return fail("Your Gudmundr account has no email address.");
+  const { rows } = await q(`SELECT display_name FROM members WHERE email = $1`, [email]);
+  let name = rows[0]?.display_name;
+  if (!name && (allowListed(email) || (await gatewayGrants(claims.sub)))) {
+    name = String(claims.name || email.split("@")[0]).slice(0, 60);
+    await q(`INSERT INTO members (email, display_name, enrolled_by) VALUES ($1,$2,'gateway-grant') ON CONFLICT (email) DO NOTHING`, [email, name]);
+  }
+  if (!name) {
+    // Verified identity, not yet a lab member: ask for the lab passcode once.
+    writeCookie(res, "gw_pending", { email, name: String(claims.name || "").slice(0, 60), exp: Date.now() + 15 * 60 * 1000 }, 900);
+    return res.redirect(302, "/#join");
+  }
+  await q(`UPDATE members SET last_login_at = now() WHERE email = $1`, [email]);
+  setSession(res, { name, email, idp: "gateway" });
+  res.redirect(302, "/");
+}));
+
+app.get("/auth/logout", (_req, res) => {
+  clearCookie(res, "sess");
+  res.redirect(302, `${GATEWAY_URL}/auth/logout`);
+});
+
+app.get("/api/join", (req, res) => {
+  const p = readCookie(req, "gw_pending");
+  res.json(p ? { pending: true, email: p.email, name: p.name } : { pending: false });
+});
+
+app.post("/api/join", wrapAsync(async (req, res) => {
+  const p = readCookie(req, "gw_pending");
+  if (!p?.email) return res.status(401).json({ error: "Sign in with Gudmundr first." });
+  if (!PASSCODE) return res.status(503).json({ error: "The lab passcode hasn't been set up yet (LAB_PASSCODE)." });
+  const a = crypto.createHash("sha256").update(String(req.body?.passcode || "")).digest();
+  const b = crypto.createHash("sha256").update(PASSCODE).digest();
+  if (!crypto.timingSafeEqual(a, b)) return res.status(401).json({ error: "Wrong passcode." });
+  const name = String(req.body?.name || p.name || p.email.split("@")[0]).trim().slice(0, 60);
+  if (!name) return res.status(400).json({ error: "Enter the name to show on your notes." });
+  await q(
+    `INSERT INTO members (email, display_name, enrolled_by) VALUES ($1,$2,'passcode')
+     ON CONFLICT (email) DO UPDATE SET display_name = EXCLUDED.display_name`,
+    [p.email, name],
+  );
+  clearCookie(res, "gw_pending");
+  setSession(res, { name, email: p.email, idp: "gateway" });
+  res.json({ name });
+}));
 
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
@@ -68,10 +156,14 @@ app.use("/api", (req, res, next) => {
   const s = readSession(req);
   if (!s?.name) return res.status(401).json({ error: "Not signed in." });
   req.user = s.name;
+  req.session = s;
   next();
 });
 
-app.get("/api/me", (req, res) => res.json({ name: req.user, ai: aiEnabled(), aiStatus: aiStatus() }));
+app.get("/api/me", (req, res) => res.json({
+  name: req.user, email: req.session.email || null, idp: req.session.idp || "passcode",
+  ai: aiEnabled(), aiStatus: aiStatus(), gateway: GATEWAY_URL,
+}));
 app.get("/api/ai/status", (_req, res) => res.json(aiStatus()));
 
 const wrap = (fn) => (req, res) => fn(req, res).catch((err) => {
@@ -301,8 +393,14 @@ app.delete("/api/scope/:id", wrap(async (req, res) => {
 }));
 
 // ---------- static frontend ----------
-app.use(express.static(path.join(here, "..", "public")));
-app.get(/^\/(?!api\/).*/, (_req, res) => res.sendFile(path.join(here, "..", "public", "index.html")));
+// index.html references the DDUUI chrome on Gudmundr Gateway; GATEWAY_URL lets a
+// local/staging Gateway serve it instead of production.
+const INDEX_HTML = fs.readFileSync(path.join(here, "..", "public", "index.html"), "utf8")
+  .replaceAll("https://gateway.gudmundr.com", GATEWAY_URL);
+const sendIndex = (_req, res) => res.type("html").set("Cache-Control", "no-cache").send(INDEX_HTML);
+app.get("/", sendIndex);
+app.use(express.static(path.join(here, "..", "public"), { index: false }));
+app.get(/^\/(?!api\/|auth\/).*/, sendIndex);
 
 // ---------- start ----------
 // Adds any starter papers not yet in the library; once all are present, never runs again

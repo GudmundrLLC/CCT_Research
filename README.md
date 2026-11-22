@@ -70,7 +70,8 @@ Then open http://localhost:3000. Requires Node 20 or later and Postgres.
 
 | Piece | Where |
 |---|---|
-| Express API and auth (shared passcode plus display name, HMAC-signed cookie) | `src/server.js` |
+| Express API and auth (Gudmundr Gateway SSO; lab passcode enrolls an account once and stays as a fallback; HMAC-signed cookie) | `src/server.js` |
+| Gateway SSO: JWT verification against Gateway JWKS, per-app membership | `src/gateway.js` |
 | Europe PMC search and PubMed abstract fallback | `src/literature.js` |
 | Subunit table (UniProt accessions verified) and UniProt lookups | `src/subunits.js` |
 | AI provider switch, prompts, and Claude calls | `src/ai.js` |
@@ -81,3 +82,17 @@ Then open http://localhost:3000. Requires Node 20 or later and Postgres.
 
 AI answers are generated from abstracts only. Check claims against the full text before
 relying on them.
+
+## Gudmundr ecosystem integration (2026-11-22)
+
+- **Sign-in** goes through Gudmundr Gateway (`/auth/gateway/start` → Gateway → `/auth/gateway/callback`).
+  The Gateway token (RS256 JWT) is verified against `${GATEWAY_URL}/jwks.json`. Identity is
+  shared across Gudmundr apps; lab access is decided here: an email in the `members` table, in
+  `LAB_MEMBER_EMAILS`, or granted `cct_research` in Gateway `/svc/perms`. New accounts enter the
+  lab passcode once to join. The old name + passcode sign-in stays as a fallback.
+- **Look and layout** come from the shared DDUUI chrome served by Gateway
+  (`/svc/dduui/tokens.css?theme=lumen`, `/static/dduui/chrome.{css,js}`): topbar, page menu in
+  the left rail (bottom dock on phones), ecosystem apps + appearance in the right rail, bottom
+  bar and sub-bar. `public/styles.css` uses `--preset-*` tokens only (light and dark).
+- Listed in the Gudmundr app catalog (`gudmundr.com/beta.html`, Gateway `/svc/ecosystem/apps`).
+

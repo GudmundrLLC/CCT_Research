@@ -12,7 +12,7 @@ async function api(path, opts = {}) {
     body: opts.body && typeof opts.body !== "string" ? JSON.stringify(opts.body) : opts.body,
   });
   const data = await res.json().catch(() => ({}));
-  if (res.status === 401 && !path.endsWith("/login")) { showLogin(); throw new Error("Not signed in"); }
+  if (res.status === 401 && !path.endsWith("/login") && !path.endsWith("/join")) { showLogin(); throw new Error("Not signed in"); }
   if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
   return data;
 }
@@ -24,7 +24,47 @@ function toast(msg) {
 }
 
 // ---------- auth ----------
-function showLogin() { $("#app").hidden = true; $("#login").hidden = false; }
+// DDUUI chrome (served by Gudmundr Gateway) is optional at runtime: if it fails
+// to load, the app still works with its own markup.
+const chrome = () => window.DDUUI || null;
+
+function showOnly(id) {
+  for (const v of ["login", "join", "app"]) $(`#${v}`).hidden = v !== id;
+  if (id !== "app") chrome()?.setUser(null);
+}
+function showLogin() {
+  showOnly("login");
+  const err = new URLSearchParams(location.search).get("sso_error");
+  $("#sso-error").textContent = err || "";
+  if (err) history.replaceState(null, "", location.pathname + location.hash);
+}
+
+async function showJoin() {
+  const j = await api("/api/join").catch(() => ({ pending: false }));
+  if (!j.pending) return false;
+  showOnly("join");
+  $("#join-email").textContent = j.email;
+  $("#join-form").elements.name.value = j.name || "";
+  return true;
+}
+$("#join-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  $("#join-error").textContent = "";
+  try {
+    await api("/api/join", { method: "POST", body: { name: f.get("name"), passcode: f.get("passcode") } });
+    history.replaceState(null, "", "/#library");
+    await boot();
+  } catch (err) { $("#join-error").textContent = err.message; }
+});
+
+async function signOut() {
+  const r = await api("/api/logout", { method: "POST" }).catch(() => ({}));
+  // Gateway-session users also end the ecosystem session (single sign-out).
+  if (state.idp === "gateway") { location.href = "/auth/logout"; return false; }
+  showLogin();
+  return false;
+}
 $("#login-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const f = new FormData(e.target);
@@ -34,7 +74,7 @@ $("#login-form").addEventListener("submit", async (e) => {
     await boot();
   } catch (err) { $("#login-error").textContent = err.message; }
 });
-$("#logout").addEventListener("click", async () => { await api("/api/logout", { method: "POST" }); showLogin(); });
+if (chrome()) chrome().config.onSignOut = signOut;
 
 // ---------- tabs ----------
 function showTab(name) {
@@ -173,18 +213,22 @@ function scanText(last) {
   const when = new Date(last.at).toLocaleString();
   return `Daily scan: last run ${when} — ${last.added} new paper${last.added === 1 ? "" : "s"} added (${last.focus} #focus) from ${last.found} found, ${last.from} → ${last.to}.`;
 }
+function setScanStatus(text) {
+  $("#scan-status").textContent = text;
+  chrome()?.setStatus(text);
+}
 async function loadScan() {
-  try { const r = await api("/api/scan"); $("#scan-status").textContent = scanText(r.last); } catch { /* ignore */ }
+  try { const r = await api("/api/scan"); setScanStatus(scanText(r.last)); } catch { /* ignore */ }
 }
 $("#scan-now").addEventListener("click", async (e) => {
   e.target.disabled = true;
-  $("#scan-status").textContent = "Daily scan: searching Europe PMC for new CCT/TRiC papers…";
+  setScanStatus("Daily scan: searching Europe PMC for new CCT/TRiC papers…");
   try {
     const r = await api("/api/scan", { method: "POST" });
-    $("#scan-status").textContent = scanText(r.at ? r : r.last);
+    setScanStatus(scanText(r.at ? r : r.last));
     await loadLibrary();
     toast(r.added ? `${r.added} new paper${r.added === 1 ? "" : "s"} added` : "No new papers");
-  } catch (err) { $("#scan-status").textContent = err.message; }
+  } catch (err) { setScanStatus(err.message); }
   e.target.disabled = false;
 });
 
@@ -198,7 +242,7 @@ async function openPaper(id) {
     <h2 id="d-title">${esc(p.title)}</h2>
     <div class="paper-meta">${esc(p.authors || "")}</div>
     <div class="paper-meta">${[p.journal, p.year].filter(Boolean).map(esc).join(" · ")}</div>
-    <div class="paper-row small" style="margin-top:6px">${idLinks(p)}</div>
+    <div class="paper-row small mt-1">${idLinks(p)}</div>
 
     <div class="section">
       <h3>Topics &amp; tags</h3>
@@ -319,7 +363,7 @@ $("#ring").addEventListener("click", async (e) => {
       ${u.pdb.map((x) => `<tr><td><a href="https://www.rcsb.org/structure/${esc(x.id)}" target="_blank" rel="noopener">${esc(x.id)}</a></td><td>${esc(x.method || "")}</td><td>${esc(x.resolution || "")}</td><td>${esc(x.chains || "")}</td></tr>`).join("")}
       </tbody></table></div></div>` : ""}
     <div class="section"><h3>Library papers mentioning ${esc(s.id)} (${s.papers.length})</h3>
-      ${s.papers.length ? `<ul class="clients">${s.papers.map((p) => `<li><button class="btn link small" data-open="${p.id}" style="padding:0;text-align:left">${esc(p.title)}</button> <span class="small muted">${esc(p.journal || "")} ${p.year || ""}</span></li>`).join("")}</ul>`
+      ${s.papers.length ? `<ul class="clients">${s.papers.map((p) => `<li><button class="btn link small flush" data-open="${p.id}">${esc(p.title)}</button> <span class="small muted">${esc(p.journal || "")} ${p.year || ""}</span></li>`).join("")}</ul>`
         : `<p class="small muted">None yet. <button class="btn link small" data-searchsu="${esc(s.id)}">Search the literature for ${esc(s.id)} →</button></p>`}
     </div>`;
 });
@@ -471,11 +515,15 @@ $("#ask-form").addEventListener("submit", async (e) => {
 // ---------- boot ----------
 async function boot() {
   try {
-    const me = await api("/api/me");
+    var me = await api("/api/me");
     state.me = me.name; state.ai = me.ai; state.aiStatus = me.aiStatus;
-  } catch { return; }
-  $("#login").hidden = true; $("#app").hidden = false;
-  $("#who").textContent = state.me;
+  } catch {
+    if (location.hash === "#join" && (await showJoin())) return;
+    return;
+  }
+  showOnly("app");
+  state.idp = me.idp; state.email = me.email;
+  chrome()?.setUser({ name: me.name, email: me.email, idp: me.idp });
   await loadLibrary();
   loadScan();
   pollAi();

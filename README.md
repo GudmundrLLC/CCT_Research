@@ -10,8 +10,13 @@ chaperonin **CCT/TRiC** (chaperonin containing TCP-1).
   read status, threaded notes on each paper, and BibTeX export.
 - **Subunit hub**: a page per human subunit with live UniProt function text, every PDB
   structure UniProt lists, and the library papers that mention it.
-- **Ask the library** (optional): Claude answers questions *only* from the saved abstracts
-  and cites each claim by PMID; per-paper AI summaries.
+- **Ask the library and AI summaries, run by IBM Granite inside the app.**
+  - **Model:** IBM Granite 4.0 1B (Apache-2.0) runs in the app server through Transformers.js /
+    ONNX Runtime on CPU.
+  - **Cost and privacy:** free, with no API key, and no lab data leaves the server.
+  - **Answers:** drawn only from the saved abstracts, with each point cited by PMID.
+  - **Speed:** on CPU a summary takes about 20–35 s, and a library question about 60–70 s.
+  - **Claude:** still available. Set `AI_PROVIDER=claude` plus `ANTHROPIC_API_KEY`.
 - **Daily auto-scan**: once a day the server adds newly published CCT/TRiC papers and preprints
   from Europe PMC to the library. They are tagged `#auto`; papers that match the proposal's focus
   (mLST8, Gβ1/Gβ5, β-propeller/WD40, Anticarin, mTORC, PhLP, cryo-EM, ring closure) are also
@@ -35,7 +40,17 @@ chaperonin **CCT/TRiC** (chaperonin containing TCP-1).
 3. On the web service, set these variables:
    - `DATABASE_URL` = `${{Postgres.DATABASE_URL}}`
    - `LAB_PASSCODE` = a passcode to share with the lab
-   - `ANTHROPIC_API_KEY` (optional) enables AI summaries and Q&A
+   - AI runs by default with IBM Granite inside the app. It needs about 3 GB RAM, plus a
+     one-time 1.8 GB model download from Hugging Face on first start. Optional settings:
+     - `GRANITE_MODEL`: defaults to `onnx-community/granite-4.0-1b-ONNX-web`. If memory is
+       under 3 GB, use `onnx-community/granite-4.0-350m-ONNX-web` (about 1 GB RAM, lower quality).
+     - `GRANITE_DTYPE`: defaults to `q4`.
+     - `GRANITE_MAX_PAPERS`: how many abstracts each question uses; default 8.
+     - `GRANITE_PRELOAD=false`: load the model on the first request instead of at startup.
+     - `GRANITE_CACHE`: where the weights are stored.
+     - Attach a Railway volume and the weights are kept on it automatically, so redeploys
+       don't download them again.
+   - `AI_PROVIDER=claude` with `ANTHROPIC_API_KEY` uses Claude instead; `AI_PROVIDER=off` disables AI.
    - `SCOPE_FEED_KEY` (optional) is a long random string. It lets the scheduled research
      reports read the Scope tab, using the `X-Scope-Key` header.
 4. Under **Settings → Networking → Generate Domain**, create a public URL.
@@ -58,7 +73,8 @@ Then open http://localhost:3000. Requires Node 20 or later and Postgres.
 | Express API and auth (shared passcode plus display name, HMAC-signed cookie) | `src/server.js` |
 | Europe PMC search and PubMed abstract fallback | `src/literature.js` |
 | Subunit table (UniProt accessions verified) and UniProt lookups | `src/subunits.js` |
-| Claude calls (Opus 5.5, answers only from abstracts, with refusal fallback) | `src/ai.js` |
+| AI provider switch, prompts, and Claude calls | `src/ai.js` |
+| In-app IBM Granite: resumable weight download, loading, one-at-a-time generation queue | `src/granite.js` |
 | Postgres schema (papers, notes, reads) | `src/db.js` |
 | Starter set PMIDs | `src/seed.js` |
 | Frontend (no build step) | `public/` |

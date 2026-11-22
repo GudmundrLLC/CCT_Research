@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { q, migrate } from "./db.js";
 import { search, lookup, recent } from "./literature.js";
 import { SUBUNITS, CLIENTS, uniprotDetails } from "./subunits.js";
-import { aiEnabled, summarize, answer, describeError } from "./ai.js";
+import { aiEnabled, aiStatus, warmUp, maxPapers, summarize, answer, describeError } from "./ai.js";
 import { SEED } from "./seed.js";
 import { KINDS, slugify, tidyKeywords, clauseFor, isCct, activeItems, scopeTags, retag, exportMarkdown, seedScope } from "./scope.js";
 
@@ -71,7 +71,8 @@ app.use("/api", (req, res, next) => {
   next();
 });
 
-app.get("/api/me", (req, res) => res.json({ name: req.user, ai: aiEnabled() }));
+app.get("/api/me", (req, res) => res.json({ name: req.user, ai: aiEnabled(), aiStatus: aiStatus() }));
+app.get("/api/ai/status", (_req, res) => res.json(aiStatus()));
 
 const wrap = (fn) => (req, res) => fn(req, res).catch((err) => {
   console.error(err);
@@ -210,7 +211,7 @@ const STOP = new Set("the a an of and or in on to for with by is are was were be
 const terms = (s) => (s.toLowerCase().match(/[a-z0-9α-ω-]{3,}/g) || []).filter((t) => !STOP.has(t));
 
 app.post("/api/papers/:id/summary", wrap(async (req, res) => {
-  if (!aiEnabled()) return res.status(503).json({ error: "AI is not configured (ANTHROPIC_API_KEY)." });
+  if (!aiEnabled()) return res.status(503).json({ error: "AI is turned off (AI_PROVIDER)." });
   const { rows } = await q(`SELECT * FROM papers WHERE id = $1`, [req.params.id]);
   if (!rows[0]) return res.status(404).json({ error: "Not found" });
   try {
@@ -221,7 +222,7 @@ app.post("/api/papers/:id/summary", wrap(async (req, res) => {
 }));
 
 app.post("/api/ask", wrap(async (req, res) => {
-  if (!aiEnabled()) return res.status(503).json({ error: "AI is not configured (ANTHROPIC_API_KEY)." });
+  if (!aiEnabled()) return res.status(503).json({ error: "AI is turned off (AI_PROVIDER)." });
   const question = String(req.body?.question || "").trim().slice(0, 2000);
   if (!question) return res.status(400).json({ error: "Ask a question." });
   const { rows } = await q(`SELECT id, source, ext_id, pmid, title, journal, year, abstract FROM papers`);
@@ -231,7 +232,8 @@ app.post("/api/ask", wrap(async (req, res) => {
     const hay = `${p.title} ${p.title} ${p.abstract || ""}`.toLowerCase();
     return { p, score: qt.reduce((s, t) => s + (hay.split(t).length - 1), 0) };
   }).sort((a, b) => b.score - a.score);
-  const pick = (rows.length <= 60 ? scored : scored.filter((x) => x.score > 0).slice(0, 60)).map((x) => x.p);
+  const cap = maxPapers();
+  const pick = (rows.length <= cap ? scored : scored.filter((x) => x.score > 0).slice(0, cap)).map((x) => x.p);
   if (!pick.length) return res.json({ answer: "No papers in the library match those terms. Try rephrasing, or add relevant papers from Search.", sources: [] });
   try {
     const text = await answer(question, pick);
@@ -378,7 +380,7 @@ app.post("/api/scan", wrap(async (_req, res) => {
 
 const port = Number(process.env.PORT) || 3000;
 await migrate();
-app.listen(port, () => console.log(`CCT Research Hub listening on :${port}`));
+app.listen(port, () => { console.log(`CCT Research Hub listening on :${port}`); warmUp(); });
 seed()
   .catch((e) => console.error("seed failed", e))
   .then(() => seedScope())

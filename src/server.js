@@ -6,7 +6,10 @@ import { fileURLToPath } from "node:url";
 import { q, migrate } from "./db.js";
 import { search, lookup, recent } from "./literature.js";
 import { SUBUNITS, CLIENTS, uniprotDetails } from "./subunits.js";
-import { aiEnabled, aiStatus, warmUp, maxPapers, summarize, answer, describeError } from "./ai.js";
+import { aiEnabled, aiStatus, warmUp, maxPapers, summarize, answer, exploreHypothesis, describeError } from "./ai.js";
+import { pickPapers, paperLabel } from "./rank.js";
+import { fetchLinks, buildGraph } from "./citations.js";
+import { suggestedSearches } from "./hypothesis.js";
 import { SEED } from "./seed.js";
 import { GATEWAY_URL, verifyGatewayToken, gatewayGrants, allowListed, loginUrl } from "./gateway.js";
 import { KINDS, slugify, tidyKeywords, clauseFor, isCct, activeItems, scopeTags, retag, exportMarkdown, seedScope } from "./scope.js";
@@ -299,8 +302,6 @@ app.get("/api/subunits/:id", wrap(async (req, res) => {
 }));
 
 // ---------- AI ----------
-const STOP = new Set("the a an of and or in on to for with by is are was were be what which how does do did that this from as at it its into about between than their there these those can could role cct tric chaperonin".split(" "));
-const terms = (s) => (s.toLowerCase().match(/[a-z0-9α-ω-]{3,}/g) || []).filter((t) => !STOP.has(t));
 
 app.post("/api/papers/:id/summary", wrap(async (req, res) => {
   if (!aiEnabled()) return res.status(503).json({ error: "AI is turned off (AI_PROVIDER)." });
@@ -319,18 +320,118 @@ app.post("/api/ask", wrap(async (req, res) => {
   if (!question) return res.status(400).json({ error: "Ask a question." });
   const { rows } = await q(`SELECT id, source, ext_id, pmid, title, journal, year, abstract FROM papers`);
   if (!rows.length) return res.json({ answer: "The library is empty — add some papers first.", sources: [] });
-  const qt = terms(question);
-  const scored = rows.map((p) => {
-    const hay = `${p.title} ${p.title} ${p.abstract || ""}`.toLowerCase();
-    return { p, score: qt.reduce((s, t) => s + (hay.split(t).length - 1), 0) };
-  }).sort((a, b) => b.score - a.score);
-  const cap = maxPapers();
-  const pick = (rows.length <= cap ? scored : scored.filter((x) => x.score > 0).slice(0, cap)).map((x) => x.p);
+  const pick = pickPapers(question, rows, maxPapers());
   if (!pick.length) return res.json({ answer: "No papers in the library match those terms. Try rephrasing, or add relevant papers from Search.", sources: [] });
   try {
     const text = await answer(question, pick);
     res.json({ answer: text, sources: pick.map((p) => ({ id: p.id, label: p.pmid ? `PMID:${p.pmid}` : `${p.source}:${p.ext_id}`, title: p.title, year: p.year })) });
   } catch (e) { res.status(502).json({ error: describeError(e) }); }
+}));
+
+// ---------- hypothesis exploration (Scientific Research Assistant) ----------
+const sourceRefs = (papers) => papers.map((p) => ({ id: p.id, label: paperLabel(p), title: p.title, year: p.year }));
+
+app.get("/api/hypotheses", wrap(async (_req, res) => {
+  const { rows } = await q(`SELECT id, author, statement, analysis, sources, model, created_at FROM hypotheses ORDER BY created_at DESC LIMIT 50`);
+  res.json(rows.map((h) => ({ ...h, searches: suggestedSearches(h.analysis) })));
+}));
+
+app.post("/api/hypotheses", wrap(async (req, res) => {
+  if (!aiEnabled()) return res.status(503).json({ error: "AI is turned off (AI_PROVIDER)." });
+  const statement = String(req.body?.statement || "").trim().slice(0, 2000);
+  if (!statement) return res.status(400).json({ error: "State a hypothesis." });
+  const { rows } = await q(`SELECT id, source, ext_id, pmid, title, journal, year, abstract FROM papers`);
+  if (!rows.length) return res.status(400).json({ error: "The library is empty — add some papers first." });
+  const pick = pickPapers(statement, rows, maxPapers());
+  if (!pick.length) return res.status(400).json({ error: "No library papers match those terms. Add relevant papers from Search first." });
+  try {
+    const analysis = await exploreHypothesis(statement, pick);
+    const status = aiStatus();
+    const model = status.provider === "granite" ? status.model || "granite" : status.provider;
+    const { rows: [h] } = await q(
+      `INSERT INTO hypotheses (author, statement, analysis, sources, model) VALUES ($1,$2,$3,$4,$5)
+       RETURNING id, author, statement, analysis, sources, model, created_at`,
+      [req.user, statement, analysis, JSON.stringify(sourceRefs(pick)), model],
+    );
+    res.status(201).json({ ...h, searches: suggestedSearches(analysis) });
+  } catch (e) { res.status(502).json({ error: describeError(e) }); }
+}));
+
+app.delete("/api/hypotheses/:id", wrap(async (req, res) => {
+  const { rowCount } = await q(`DELETE FROM hypotheses WHERE id=$1 AND author=$2`, [req.params.id, req.user]);
+  if (!rowCount) return res.status(403).json({ error: "You can only delete your own hypotheses." });
+  res.json({ ok: true });
+}));
+
+// ---------- citation graph (Scientific Research Assistant) ----------
+async function storeLinks(paper) {
+  const links = await fetchLinks(paper);
+  for (const l of links) {
+    await q(
+      `INSERT INTO citation_links (citing_source, citing_ext, cited_source, cited_ext, citing_title, citing_year, cited_title, cited_year)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT DO NOTHING`,
+      [l.citing.source, l.citing.ext_id, l.cited.source, l.cited.ext_id, l.citing.title, l.citing.year, l.cited.title, l.cited.year],
+    );
+  }
+  await q(`UPDATE papers SET citations_fetched_at = now() WHERE id = $1`, [paper.id]);
+  return links.length;
+}
+
+const GRAPH_COLS = `id, source, ext_id, pmid, title, year, topics`;
+async function graphFor() {
+  const papers = (await q(`SELECT ${GRAPH_COLS} FROM papers ORDER BY year NULLS LAST`)).rows;
+  const links = (await q(`SELECT * FROM citation_links`)).rows;
+  return buildGraph(papers, links);
+}
+
+app.get("/api/graph", wrap(async (_req, res) => {
+  const g = await graphFor();
+  const { rows: [c] } = await q(`SELECT count(*) FILTER (WHERE citations_fetched_at IS NULL)::int AS pending, count(*)::int AS total FROM papers`);
+  res.json({ ...g, pending: c.pending, total: c.total });
+}));
+
+let graphRefreshRunning = false;
+app.post("/api/graph/refresh", wrap(async (req, res) => {
+  if (graphRefreshRunning) return res.status(409).json({ error: "A citation refresh is already running." });
+  graphRefreshRunning = true;
+  try {
+    const limit = Math.min(Number(req.body?.limit) || 20, 50);
+    const { rows } = await q(`SELECT ${GRAPH_COLS} FROM papers WHERE citations_fetched_at IS NULL ORDER BY added_at DESC LIMIT $1`, [limit]);
+    let fetched = 0, links = 0; const failed = [];
+    for (const p of rows) {
+      try { links += await storeLinks(p); fetched++; } catch (e) { failed.push({ id: p.id, error: e.message }); }
+    }
+    res.json({ fetched, links, failed });
+  } catch (e) { res.status(502).json({ error: `Citation refresh failed: ${e.message}` }); }
+  finally { graphRefreshRunning = false; }
+}));
+
+app.get("/api/papers/:id/citations", wrap(async (req, res) => {
+  const { rows: [p] } = await q(`SELECT ${GRAPH_COLS}, citations_fetched_at FROM papers WHERE id = $1`, [req.params.id]);
+  if (!p) return res.status(404).json({ error: "Not found" });
+  const g = await graphFor();
+  const node = (id) => g.nodes.find((n) => n.id === id);
+  const keys = [[p.source, p.ext_id], ...(p.pmid ? [["MED", p.pmid]] : [])];
+  const match = (side) => keys.map((_, i) => `(${side}_source = $${2 * i + 1} AND ${side}_ext = $${2 * i + 2})`).join(" OR ");
+  const counts = (await q(
+    `SELECT count(*) FILTER (WHERE ${match("citing")})::int AS refs,
+            count(*) FILTER (WHERE ${match("cited")})::int AS cited_by
+       FROM citation_links`,
+    keys.flatMap(([src, ext]) => [src, String(ext)]),
+  )).rows[0];
+  res.json({
+    fetched_at: p.citations_fetched_at,
+    cites: g.edges.filter((e) => e.from === p.id).map((e) => node(e.to)),
+    cited_by: g.edges.filter((e) => e.to === p.id).map((e) => node(e.from)),
+    totals: counts,
+  });
+}));
+
+app.post("/api/papers/:id/citations", wrap(async (req, res) => {
+  const { rows: [p] } = await q(`SELECT ${GRAPH_COLS} FROM papers WHERE id = $1`, [req.params.id]);
+  if (!p) return res.status(404).json({ error: "Not found" });
+  try { res.json({ links: await storeLinks(p) }); }
+  catch (e) { res.status(502).json({ error: `Europe PMC lookup failed: ${e.message}` }); }
 }));
 
 // ---------- research scope ----------

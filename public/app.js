@@ -84,6 +84,7 @@ function showTab(name) {
   if (name === "subunits") loadSubunits();
   if (name === "library") renderLibrary();
   if (name === "scope") loadScope();
+  if (name === "explore") loadExplore();
 }
 $$(".tabs button").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
 
@@ -274,6 +275,11 @@ async function openPaper(id) {
     </div>
 
     <div class="section">
+      <h3>Citations in the library</h3>
+      <div id="d-cites"><p class="skeleton small">Loading…</p></div>
+    </div>
+
+    <div class="section">
       <h3>Lab notes (${p.notes.length})</h3>
       <div id="d-notes">${p.notes.map(noteHtml).join("") || `<p class="small muted">No notes yet — start the discussion.</p>`}</div>
       <form class="note-form" id="d-noteform">
@@ -288,6 +294,7 @@ async function openPaper(id) {
     </div>`;
 
   const refresh = () => { loadLibrary(); openPaper(id); };
+  loadPaperCitations(id);
   $("#d-read").onclick = async () => { await api(`/api/papers/${id}/read`, { method: "POST", body: { read: !p.read } }); refresh(); };
   $("#d-tags").onclick = async (e) => {
     const t = e.target.dataset.topic, u = e.target.dataset.untag;
@@ -512,6 +519,158 @@ $("#ask-form").addEventListener("submit", async (e) => {
   btn.disabled = false;
 });
 
+// ---------- explore: hypotheses + citation graph ----------
+const citeLink = (n) => `<li><button class="btn link small" data-open="${n.id}">${esc(n.title)}</button> <span class="muted">${esc(n.year || "")}</span></li>`;
+
+async function loadPaperCitations(id) {
+  const el = $("#d-cites");
+  if (!el) return;
+  try {
+    const c = await api(`/api/papers/${id}/citations`);
+    const lists = (c.cites.length ? `<p class="small">Cites ${c.cites.length} library paper${c.cites.length > 1 ? "s" : ""}:</p><ul>${c.cites.map(citeLink).join("")}</ul>` : "")
+      + (c.cited_by.length ? `<p class="small">Cited by ${c.cited_by.length} library paper${c.cited_by.length > 1 ? "s" : ""}:</p><ul>${c.cited_by.map(citeLink).join("")}</ul>` : "");
+    el.innerHTML = c.fetched_at
+      ? `${lists || `<p class="small muted">No citation links to other library papers.</p>`}
+         <p class="small muted">Europe PMC lists ${c.totals.refs} references and ${c.totals.cited_by} citing papers. <button class="btn link small" id="d-cfetch">Refresh</button></p>`
+      : `<button class="btn small" id="d-cfetch">Fetch citations from Europe PMC</button>`;
+    const b = $("#d-cfetch");
+    if (b) b.onclick = async () => {
+      el.innerHTML = `<p class="skeleton small">Fetching…</p>`;
+      try { await api(`/api/papers/${id}/citations`, { method: "POST" }); loadPaperCitations(id); }
+      catch (err) { el.innerHTML = `<p class="error">${esc(err.message)}</p>`; }
+    };
+  } catch (err) { el.innerHTML = `<p class="error">${esc(err.message)}</p>`; }
+}
+$("#drawer-body").addEventListener("click", (e) => {
+  const o = e.target.closest("#d-cites [data-open]");
+  if (o) openPaper(Number(o.dataset.open));
+});
+
+function hypHtml(h) {
+  return `<div class="answer hyp" data-hyp="${h.id}">
+    <p class="small"><strong>${esc(h.author)}</strong> · ${new Date(h.created_at).toLocaleDateString()}
+      ${h.author === state.me ? `<button class="btn link small" data-delhyp="${h.id}">Delete</button>` : ""}</p>
+    <p class="hyp-statement">${esc(h.statement)}</p>
+    <div class="answer-body">${md(h.analysis)}</div>
+    ${h.searches?.length ? `<div class="paper-row small">Run a search: ${h.searches.map((s) => `<button class="chip" data-runsearch="${esc(s)}">${esc(s)}</button>`).join(" ")}</div>` : ""}
+    <div class="sources">From ${h.sources.length} library abstract${h.sources.length === 1 ? "" : "s"}${h.model ? ` · ${esc(String(h.model).split("/").pop())}` : ""}. Verify against the full text.</div>
+  </div>`;
+}
+
+async function loadHypotheses() {
+  try {
+    const list = await api("/api/hypotheses");
+    $("#hyp-list").innerHTML = list.length ? list.map(hypHtml).join("") : `<p class="small muted">None yet.</p>`;
+  } catch (err) { $("#hyp-list").innerHTML = `<p class="error">${esc(err.message)}</p>`; }
+}
+
+$("#hyp-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const out = $("#hyp-out");
+  if (!state.ai) { out.innerHTML = `<p class="error">AI is turned off on this server.</p>`; return; }
+  const statement = new FormData(e.target).get("statement");
+  const btn = e.target.querySelector("button"); btn.disabled = true;
+  out.innerHTML = `<p class="skeleton">Weighing the hypothesis with ${esc(aiName())}… (on CPU this can take up to a minute)</p>`;
+  try {
+    const h = await api("/api/hypotheses", { method: "POST", body: { statement } });
+    out.innerHTML = hypHtml(h); e.target.reset(); loadHypotheses();
+  } catch (err) { out.innerHTML = `<p class="error">${esc(err.message)}</p>`; }
+  btn.disabled = false;
+});
+
+$("#tab-explore").addEventListener("click", async (e) => {
+  const o = e.target.closest("[data-open]");
+  if (o) return openPaper(Number(o.dataset.open));
+  const rs = e.target.closest("[data-runsearch]");
+  if (rs) {
+    const f = $("#search-form");
+    f.elements.text.value = rs.dataset.runsearch;
+    showTab("search"); f.requestSubmit();
+    return;
+  }
+  const d = e.target.closest("[data-delhyp]");
+  if (d && confirm("Delete this hypothesis for everyone?")) {
+    try { await api(`/api/hypotheses/${d.dataset.delhyp}`, { method: "DELETE" }); $("#hyp-out").innerHTML = ""; loadHypotheses(); }
+    catch (err) { toast(err.message); }
+  }
+});
+
+// Small force-directed layout in SVG: nodes are library papers, arrows point
+// from the citing paper to the cited one. Isolated papers are left out.
+function drawGraph(g) {
+  const box = $("#graph");
+  const linked = new Set(g.edges.flatMap((e) => [e.from, e.to]));
+  const nodes = g.nodes.filter((n) => linked.has(n.id)).map((n, i, a) => ({ ...n, x: Math.cos((2 * Math.PI * i) / a.length), y: Math.sin((2 * Math.PI * i) / a.length) }));
+  if (!nodes.length) { box.innerHTML = `<p class="small muted">No citation links between library papers yet. Fetch citations first.</p>`; return; }
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const edges = g.edges.map((e) => [byId.get(e.from), byId.get(e.to)]).filter(([a, b]) => a && b);
+  for (let it = 0; it < 300; it++) {
+    const k = 0.9 / Math.sqrt(nodes.length), t = 0.08 * (1 - it / 300);
+    for (const a of nodes) { a.dx = 0; a.dy = 0; }
+    for (const a of nodes) for (const b of nodes) {
+      if (a === b) continue;
+      const dx = a.x - b.x, dy = a.y - b.y, d = Math.hypot(dx, dy) || 0.01;
+      a.dx += (dx / d) * (k * k) / d; a.dy += (dy / d) * (k * k) / d;
+    }
+    for (const [a, b] of edges) {
+      const dx = a.x - b.x, dy = a.y - b.y, d = Math.hypot(dx, dy) || 0.01, f = (d * d) / k;
+      a.dx -= (dx / d) * f; a.dy -= (dy / d) * f; b.dx += (dx / d) * f; b.dy += (dy / d) * f;
+    }
+    for (const a of nodes) {
+      const d = Math.hypot(a.dx, a.dy) || 1;
+      a.x += (a.dx / d) * Math.min(d, t) - a.x * 0.01; a.y += (a.dy / d) * Math.min(d, t) - a.y * 0.01;
+    }
+  }
+  const xs = nodes.map((n) => n.x), ys = nodes.map((n) => n.y);
+  const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+  const W = 640, H = 420, P = 24;
+  const sx = (x) => P + ((x - x0) / (x1 - x0 || 1)) * (W - 2 * P), sy = (y) => P + ((y - y0) / (y1 - y0 || 1)) * (H - 2 * P);
+  const topic = (n) => n.topics[0] ? `g-${n.topics[0]}` : "";
+  box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">
+    <defs><marker id="arr" viewBox="0 0 10 10" refX="16" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="g-arrow"/></marker></defs>
+    ${edges.map(([a, b]) => `<line class="g-edge" x1="${sx(a.x)}" y1="${sy(a.y)}" x2="${sx(b.x)}" y2="${sy(b.y)}" marker-end="url(#arr)"/>`).join("")}
+    ${nodes.map((n) => `<g class="g-node ${topic(n)}" data-open="${n.id}" tabindex="0" role="button" aria-label="${esc(n.title)}">
+      <circle cx="${sx(n.x)}" cy="${sy(n.y)}" r="${5 + Math.min(n.degree, 8)}"/><title>${esc(n.title)} (${esc(n.year || "?")}) · ${n.degree} link${n.degree === 1 ? "" : "s"}</title></g>`).join("")}
+  </svg>`;
+}
+
+const suggestionHtml = (r) => `<li><a href="${r.source === "MED" ? `https://pubmed.ncbi.nlm.nih.gov/${encodeURIComponent(r.ext_id)}/` : `https://europepmc.org/article/${encodeURIComponent(r.source)}/${encodeURIComponent(r.ext_id)}`}" target="_blank" rel="noopener">${esc(r.title || `${r.source}:${r.ext_id}`)}</a>
+  <span class="muted">${esc(r.year || "")} · ${r.shared} library papers</span>
+  <button class="btn link small" data-addref="${esc(r.source)}:${esc(r.ext_id)}">Add</button></li>`;
+
+async function loadGraph() {
+  try {
+    const g = await api("/api/graph");
+    $("#graph-pending").textContent = g.pending ? `${g.pending} of ${g.total} papers have no citation data yet.` : `Citation data fetched for all ${g.total} papers.`;
+    $("#graph-refresh").hidden = !g.pending;
+    drawGraph(g);
+    $("#graph-cited").innerHTML = g.suggestions.cited.map(suggestionHtml).join("") || `<li class="muted">Nothing shared by two or more library papers yet.</li>`;
+    $("#graph-citing").innerHTML = g.suggestions.citing.map(suggestionHtml).join("") || `<li class="muted">Nothing shared by two or more library papers yet.</li>`;
+  } catch (err) { $("#graph").innerHTML = `<p class="error">${esc(err.message)}</p>`; }
+}
+
+$("#graph-refresh").addEventListener("click", async (e) => {
+  e.target.disabled = true;
+  $("#graph-pending").textContent = "Fetching reference lists from Europe PMC…";
+  try {
+    const r = await api("/api/graph/refresh", { method: "POST", body: { limit: 20 } });
+    toast(`Fetched ${r.fetched} papers${r.failed.length ? `, ${r.failed.length} failed` : ""}`);
+  } catch (err) { toast(err.message); }
+  e.target.disabled = false;
+  loadGraph();
+});
+
+$("#tab-explore").addEventListener("click", async (e) => {
+  const a = e.target.closest("[data-addref]");
+  if (!a) return;
+  const [source, ext_id] = a.dataset.addref.split(":");
+  if (!/^(MED|PPR)$/.test(source)) { toast("Only PubMed records and preprints can be added."); return; }
+  try { await api("/api/papers", { method: "POST", body: { source, ext_id } }); toast("Added to library"); loadLibrary(); loadGraph(); }
+  catch (err) { toast(err.message); }
+});
+
+function loadExplore() { loadHypotheses(); loadGraph(); }
+
 // ---------- boot ----------
 async function boot() {
   try {
@@ -527,6 +686,6 @@ async function boot() {
   await loadLibrary();
   loadScan();
   pollAi();
-  showTab(["search", "library", "subunits", "scope", "ask"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "library");
+  showTab(["search", "library", "subunits", "scope", "ask", "explore"].includes(location.hash.slice(1)) ? location.hash.slice(1) : "library");
 }
 boot();

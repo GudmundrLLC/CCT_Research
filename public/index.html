@@ -61,6 +61,7 @@
       <button role="tab" data-tab="subunits" data-icon="atom">Subunits</button>
       <button role="tab" data-tab="scope" data-icon="target">Scope</button>
       <button role="tab" data-tab="ask" data-icon="message-circle-question">Ask</button>
+      <button role="tab" data-tab="explore" data-icon="lightbulb">Explore</button>
     </nav>
 
     <div class="page">
@@ -219,6 +220,35 @@
             <button class="btn primary" type="submit">Ask</button>
           </form>
           <div id="ask-out"></div>
+        </div>
+      </section>
+
+      <!-- EXPLORE: hypothesis exploration + citation graph (Scientific Research Assistant) -->
+      <section id="tab-explore" class="tab" hidden>
+        <div class="ask-wrap">
+          <h2 class="h2">Explore a hypothesis</h2>
+          <p class="muted small">Weighs a hypothesis against the library abstracts only: supporting and contradicting evidence with citations, open gaps, and searches to close them. Saved for the lab.</p>
+          <form id="hyp-form" class="ask-form">
+            <textarea name="statement" rows="3" required maxlength="2000" placeholder="e.g. CCT subunit CCT4 contacts the WD40 β-propeller of mLST8 during folding"></textarea>
+            <button class="btn primary" type="submit">Explore</button>
+          </form>
+          <div id="hyp-out"></div>
+          <h3 class="h3">Lab hypotheses</h3>
+          <div id="hyp-list"><p class="small muted">None yet.</p></div>
+        </div>
+
+        <div class="section graph-section">
+          <h2 class="h2">Citation graph</h2>
+          <p class="muted small" id="graph-status">Which library papers cite each other, from Europe PMC reference lists.</p>
+          <div class="paper-row">
+            <button class="btn small" id="graph-refresh" type="button">Fetch citations</button>
+            <span class="small muted" id="graph-pending"></span>
+          </div>
+          <div id="graph" class="graph" role="img" aria-label="Citation graph of library papers"></div>
+          <div class="graph-lists">
+            <div><h3 class="h3">Often cited by the library, not saved</h3><ol id="graph-cited" class="small"></ol></div>
+            <div><h3 class="h3">Citing several library papers, not saved</h3><ol id="graph-citing" class="small"></ol></div>
+          </div>
         </div>
       </section>
     </div>

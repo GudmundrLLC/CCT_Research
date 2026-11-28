@@ -76,5 +76,28 @@ export async function migrate() {
       key   TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
+    -- Scientific Research Assistant (merged 2026-11-28): citation graph + hypotheses.
+    ALTER TABLE papers ADD COLUMN IF NOT EXISTS citations_fetched_at TIMESTAMPTZ;
+    CREATE TABLE IF NOT EXISTS citation_links (
+      citing_source TEXT NOT NULL,
+      citing_ext    TEXT NOT NULL,
+      cited_source  TEXT NOT NULL,
+      cited_ext     TEXT NOT NULL,
+      citing_title  TEXT,
+      citing_year   INTEGER,
+      cited_title   TEXT,
+      cited_year    INTEGER,
+      PRIMARY KEY (citing_source, citing_ext, cited_source, cited_ext)
+    );
+    CREATE INDEX IF NOT EXISTS citation_links_cited ON citation_links (cited_source, cited_ext);
+    CREATE TABLE IF NOT EXISTS hypotheses (
+      id          SERIAL PRIMARY KEY,
+      author      TEXT NOT NULL,
+      statement   TEXT NOT NULL,
+      analysis    TEXT NOT NULL,
+      sources     JSONB NOT NULL DEFAULT '[]',
+      model       TEXT,
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
   `);
 }

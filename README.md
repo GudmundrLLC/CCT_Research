@@ -17,6 +17,16 @@ chaperonin **CCT/TRiC** (chaperonin containing TCP-1).
   - **Answers:** drawn only from the saved abstracts, with each point cited by PMID.
   - **Speed:** on CPU a summary takes about 20–35 s, and a library question about 60–70 s.
   - **Claude:** still available. Set `AI_PROVIDER=claude` plus `ANTHROPIC_API_KEY`.
+- **Explore (Scientific Research Assistant, merged into this app 2026-11-28)**:
+  - **Hypothesis exploration:** state a hypothesis and the AI weighs it against the library
+    abstracts only: supporting and contradicting evidence (each cited by PMID), open gaps,
+    suggested searches (one click runs them in Search) and possible experiments. Results are
+    saved for the lab; authors can delete their own.
+  - **Citation graph:** reference and citation lists come from Europe PMC (no key). The graph
+    shows which library papers cite each other, and lists outside papers that two or more
+    library papers cite (or that cite two or more library papers), with one-click Add. Each
+    paper's drawer shows its in-library citations. **Fetch citations** pulls data for up to 20
+    papers at a time.
 - **Daily auto-scan**: once a day the server adds newly published CCT/TRiC papers and preprints
   from Europe PMC to the library. They are tagged `#auto`; papers that match the proposal's focus
   (mLST8, Gβ1/Gβ5, β-propeller/WD40, Anticarin, mTORC, PhLP, cryo-EM, ring closure) are also
@@ -78,6 +88,9 @@ Then open http://localhost:3000. Requires Node 20 or later and Postgres.
 | In-app IBM Granite: resumable weight download, loading, one-at-a-time generation queue | `src/granite.js` |
 | Postgres schema (papers, notes, reads) | `src/db.js` |
 | Starter set PMIDs | `src/seed.js` |
+| Citation graph: Europe PMC references/citations, graph building | `src/citations.js` |
+| Library ranking shared by Ask and Explore; hypothesis parsing | `src/rank.js`, `src/hypothesis.js` |
+| Tests for the pure modules (`npm test`) | `test/` |
 | Frontend (no build step) | `public/` |
 
 AI answers are generated from abstracts only. Check claims against the full text before

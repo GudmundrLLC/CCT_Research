@@ -203,3 +203,18 @@ html:not(.dd-chrome) .tabs button { border: none; background: none; font: inheri
 html:not(.dd-chrome) .tabs button[aria-selected="true"] { font-weight: var(--preset-font-weight-semibold); }
 .mt-1 { margin-top: var(--preset-space-1-5); }
 .btn.flush { padding: var(--preset-space-0); text-align: left; justify-content: flex-start; white-space: normal; }
+
+/* Explore: hypothesis exploration + citation graph */
+.hyp { margin-bottom: var(--preset-space-4); }
+.hyp-statement { font-family: var(--preset-font-display); font-size: var(--preset-font-size-body); margin: var(--preset-space-1) var(--preset-space-0) var(--preset-space-2); }
+.graph-section { margin-top: var(--preset-space-6); }
+.graph { border: var(--preset-border-width-hairline) solid var(--preset-border); border-radius: var(--preset-radius-card); background: var(--preset-surface-raised); margin-top: var(--preset-space-3); }
+.graph svg { display: block; width: 100%; height: auto; }
+.g-edge { stroke: var(--preset-border-strong); stroke-width: var(--preset-border-width-hairline); }
+.g-arrow { fill: var(--preset-border-strong); }
+.g-node circle { fill: var(--preset-text-muted); stroke: var(--preset-surface-raised); stroke-width: var(--preset-border-width-thick); cursor: pointer; }
+.g-node:focus circle, .g-node:hover circle { stroke: var(--preset-primary); }
+.g-structure circle { fill: var(--cct-structure); }
+.g-disease circle { fill: var(--cct-disease); }
+.g-substrates circle { fill: var(--cct-substrates); }
+.graph-lists { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, calc(var(--preset-space-1) * 70)), 1fr)); gap: var(--preset-space-4); }

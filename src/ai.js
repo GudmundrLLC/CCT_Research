@@ -94,6 +94,24 @@ export async function answer(question, papers) {
   return text;
 }
 
+// Hypothesis exploration: weigh a lab hypothesis against the library abstracts.
+// Same provider switch and citation rules as answer(); nothing is added beyond
+// what the abstracts say, and gaps become suggested searches.
+export async function exploreHypothesis(statement, papers) {
+  const granite = PROVIDER === "granite";
+  const text = await ask(
+    `Library abstracts (${papers.length}):\n\n${formatPapers(papers)}\n\n---\nHypothesis: ${statement}\n\n` +
+      (granite
+        ? `Weigh the hypothesis using only these abstracts. Write four short parts, each a heading line then 1-3 bullets ending with the [PMID:...] used:\nSupporting evidence\nContradicting evidence\nOpen gaps\nSuggested searches (plain search terms, no citation needed)`
+        : `Evaluate the hypothesis strictly from these abstracts. Use these headings, each followed by bullets:\n**Supporting evidence**\n**Contradicting or complicating evidence**\n**Open gaps** (what the abstracts cannot settle; note where full text is needed)\n**Suggested searches** (3-5 Europe PMC search phrases that would close the gaps)\n**Possible experiments** (1-3, each tied to a cited finding)\nEvery evidence bullet must cite the abstract IDs it relies on. Do not rate the hypothesis as proven.`),
+    "medium",
+  );
+  if (granite && !/\[(PMID|PPR|MED):/i.test(text)) {
+    return `${text}\n\nNote: the model did not cite specific papers inline; the analysis is drawn only from the library abstracts listed below.`;
+  }
+  return text;
+}
+
 export function describeError(err) {
   if (PROVIDER === "granite") return `Granite (${GRANITE_MODEL}): ${err.message}`;
   if (err instanceof Anthropic.AuthenticationError) return "The Anthropic API key is invalid.";
